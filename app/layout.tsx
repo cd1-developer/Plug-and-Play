@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-
+import TanstackProvider from "@/libs/TanstackProvider";
+import { ReduxProvider } from "@/store/ReduxProvider";
+import { WebSocketProvider } from "@/hooks/websocket/WebsocketProvider";
+import { PeerProvider } from "@/hooks/Peer/PeerProvider";
+import { Toaster } from "@/components/ui/sonner";
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -23,7 +27,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <ReduxProvider>
+          <TanstackProvider>
+            <WebSocketProvider>
+              <PeerProvider>{children}</PeerProvider>
+            </WebSocketProvider>
+            <Toaster />
+          </TanstackProvider>
+        </ReduxProvider>
+      </body>
     </html>
   );
 }
