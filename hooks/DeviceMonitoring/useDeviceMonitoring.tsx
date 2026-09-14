@@ -1,10 +1,16 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 
-import useWebsocket from "@/hooks/websocket/useWebsocket";
+import { useWebSocketContext } from "@/hooks/websocket/WebsocketProvider";
 import { usePeer } from "@/hooks/Peer/usePeer";
 
 function useDeviceMonitoring({ deviceId }: { deviceId: string }) {
-  const { connected, socket, addListener, removeListener } = useWebsocket();
+  // Use the shared, root-mounted socket — NOT a private useWebsocket() here.
+  // A private socket is closed as part of this hook's own unmount, so the STOP
+  // sent by the cleanup below raced that close and was dropped on a
+  // CLOSING/CLOSED socket — the device never terminated on Terminate. The
+  // shared socket outlives this component, so the STOP actually goes out.
+  const { connected, socket, addListener, removeListener } =
+    useWebSocketContext();
 
   const { peer, remoteStream, createOffer, setRemoteAns, resetPeer } =
     usePeer();
