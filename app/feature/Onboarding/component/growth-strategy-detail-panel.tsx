@@ -12,8 +12,12 @@ import AttemptLoginRemoteControlStep from "@/app/feature/LoginAttempt/component/
 import LiveDeviceScreenshot from "@/app/feature/LoginAttempt/component/live-device-screenshot";
 import useChangeVpnLocation from "@/app/feature/LoginAttempt/hooks/useChangeVpnLocation";
 import useLocation from "@/app/feature/LoginAttempt/hooks/useLocation";
-import useAssignedPlacements from "@/app/feature/placemenet/hook/useAssignedPlacements";
-import { isDeviceConnected } from "@/app/feature/placemenet/utils/placement-device-status";
+import usePlacementForClientAccount from "@/app/feature/placemenet/hook/usePlacementForClientAccount";
+import useUnassignedPlacements from "@/app/feature/placemenet/hook/useUnassignedPlacements";
+import {
+  isDeviceConnected,
+  type PlacementWithDeviceStatus,
+} from "@/app/feature/placemenet/utils/placement-device-status";
 import { useAppSelector } from "@/store/storeConfig";
 import type { RankedVpnLocation } from "@/utils/service/LocationService";
 
@@ -35,14 +39,27 @@ function GrowthStrategyDetailPanel({
   strategy,
 }: GrowthStrategyDetailPanelProps) {
   const clientAccountId = strategy.clientAccountId;
+
   const { dailyStatus, refetch: refetchDailyStatus } =
     useDailyStatus(clientAccountId);
-  const { assignedPlacements } = useAssignedPlacements();
-  const placement =
-    assignedPlacements.find((p) => p.clientAccountId === clientAccountId) ??
-    null;
-  console.log({ placement });
-  const deviceId = placement?.deviceId ?? null;
+  const { placement } = usePlacementForClientAccount(clientAccountId);
+
+  // No backend endpoint can link an EXISTING client account to a placement
+  // (assign() only ever creates a brand-new one) — so when this account has
+  // no device yet, a free unassigned placement is picked at random and used
+  // for this session's VPN/remote-control flow instead. That pairing is
+  // local only: nothing persists it server-side, so it isn't remembered
+  // after a refresh or re-selecting this strategy.
+  const [fallbackPlacement, setFallbackPlacement] =
+    useState<PlacementWithDeviceStatus | null>(null);
+  const effectivePlacement = placement ?? fallbackPlacement;
+  const deviceId = effectivePlacement?.deviceId ?? null;
+
+  const { unassignedPlacements, isLoading: isLoadingUnassigned } =
+    useUnassignedPlacements({ enabled: !deviceId });
+  const freeUnassignedPlacements = unassignedPlacements.filter(
+    (p) => p.connected && !p.isRunning,
+  );
 
   const device = useAppSelector((state) =>
     deviceId ? state.devices[deviceId] : undefined,
@@ -69,6 +86,7 @@ function GrowthStrategyDetailPanel({
   useEffect(() => {
     setSubStage("idle");
     setVpnLocation(null);
+    setFallbackPlacement(null);
     vpnCommandSentRef.current = false;
   }, [strategy.id]);
 
@@ -101,15 +119,26 @@ function GrowthStrategyDetailPanel({
   ]);
 
   const startVpnConnect = async () => {
-    console.log(deviceId);
-    if (!deviceId) return ErrorToast("No device linked to this account yet");
+    let target = effectivePlacement;
+    if (!target) {
+      if (isLoadingUnassigned) {
+        return ErrorToast("Still checking for an available device — try again in a moment");
+      }
+      if (freeUnassignedPlacements.length === 0) {
+        return ErrorToast("No free device is available right now");
+      }
+      target =
+        freeUnassignedPlacements[
+          Math.floor(Math.random() * freeUnassignedPlacements.length)
+        ];
+      setFallbackPlacement(target);
+    }
+    if (!target.deviceId) return ErrorToast("Selected placement has no device");
     if (!strategy.loginLocation) {
       return ErrorToast("This growth strategy has no login location set");
     }
-    if (!isDeviceOnline) {
-      return ErrorToast("Device is currently offline");
-    }
-    if (placement?.isRunning) {
+    if (!target.connected) return ErrorToast("Device is currently offline");
+    if (target.isRunning) {
       return ErrorToast("Device is already running another automation");
     }
 
@@ -125,7 +154,7 @@ function GrowthStrategyDetailPanel({
     // the device's own websocket report of the run we just kicked off, not a
     // leftover from an earlier one.
     vpnCommandSentRef.current = true;
-    changeVpnLocation({ deviceId, vpnLocation: closest.city });
+    changeVpnLocation({ deviceId: target.deviceId, vpnLocation: closest.city });
   };
 
   const handleRetryVpn = () => startVpnConnect();
@@ -195,7 +224,15 @@ function GrowthStrategyDetailPanel({
               </div>
             )}
             {subStage === "idle" && (
-              <Button onClick={startVpnConnect}>Login your account</Button>
+              <>
+                {!deviceId && (
+                  <p className="text-xs text-muted-foreground">
+                    No device linked yet — a free one will be picked
+                    automatically.
+                  </p>
+                )}
+                <Button onClick={startVpnConnect}>Login your account</Button>
+              </>
             )}
           </>
         )}

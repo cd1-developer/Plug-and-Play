@@ -3,6 +3,7 @@ import { createMigrate, persistReducer, persistStore } from "redux-persist";
 import { TypedUseSelectorHook, useDispatch, useSelector } from "react-redux";
 import storage from "redux-persist/lib/storage";
 import devicesReducer from "./slices/devices/devices.slice";
+import placementsReducer from "./slices/placements/placements.slice";
 
 import { reduxSyncMiddleware } from "./redux-middleware";
 
@@ -46,12 +47,16 @@ const persistConfig = {
   key: "root",
   version: 4,
   storage,
-  whitelist: ["placements"],
+  // Nothing is persisted: `placements` below is an in-memory-only cache (never
+  // localStorage) — this whitelist must stay empty or that name would collide
+  // with the stale v4 migration's key and start persisting it silently.
+  whitelist: [],
   migrate: createMigrate(migrations, { debug: false }),
 };
 
 const rootReducer = combineReducers({
   devices: devicesReducer,
+  placements: placementsReducer,
 });
 
 const persistedReducer = persistReducer(persistConfig, rootReducer);

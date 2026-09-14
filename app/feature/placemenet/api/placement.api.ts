@@ -25,22 +25,26 @@ class PlacementApi {
     }
   }
 
-  /** Placements that already have a client account — used to look up which
-   *  device/placement belongs to a given clientAccountId. */
-  async getAssigned(): Promise<ServiceResult<Placement[]>> {
+  /** The placement/device linked to one clientAccountId, if any — a direct
+   *  lookup rather than fetching every placement and filtering client-side. */
+  async getByClientAccountId(
+    clientAccountId: string,
+  ): Promise<ServiceResult<Placement | null>> {
     try {
-      const { data } = await axiosInstance.get(`${this.endpoint}`);
+      const { data } = await axiosInstance.get(
+        `${this.endpoint}/by-client-account/${clientAccountId}`,
+      );
       if (!data.success) {
         return {
           success: false,
-          message: data.message ?? "Failed to fetch placements",
+          message: data.message ?? "Failed to fetch placement",
         };
       }
-      return { success: true, data: data.data };
+      return { success: true, data: data.data ?? null };
     } catch (error: any) {
       return {
         success: false,
-        message: error.response?.data?.error ?? "Failed to fetch placements",
+        message: error.response?.data?.error ?? "Failed to fetch placement",
       };
     }
   }
