@@ -4,6 +4,38 @@ import { ServiceResult } from "@/comman/interfaces";
 
 class PlacementApi {
   private readonly endpoint = "/placements";
+
+  /** Bind an EXISTING client account to a placement — the post-VPN step of the
+   *  split onboarding flow. The account is created up front (at growth-strategy
+   *  submit) with no device; here it finally gets one, after its VPN connected.
+   *  PATCH /placements/:placementId/assign-account { clientAccountId } */
+  async assignClientAccount(
+    placementId: string,
+    clientAccountId: string,
+  ): Promise<ServiceResult<Placement>> {
+    try {
+      const { data } = await axiosInstance.patch(
+        `${this.endpoint}/${placementId}/assign-account`,
+        { clientAccountId },
+      );
+      if (!data.success) {
+        return {
+          success: false,
+          message: data.message ?? "Failed to assign account to device",
+        };
+      }
+      return { success: true, data: data.data };
+    } catch (error: any) {
+      return {
+        success: false,
+        message:
+          error.response?.data?.error ??
+          error.response?.data?.message ??
+          "Failed to assign account to device",
+      };
+    }
+  }
+
   /** Device connected, no client account assigned yet — ready to log in. */
   async getUnassigned(): Promise<ServiceResult<Placement[]>> {
     try {

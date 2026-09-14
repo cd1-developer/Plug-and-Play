@@ -14,6 +14,7 @@ import useChangeVpnLocation from "@/app/feature/LoginAttempt/hooks/useChangeVpnL
 import useLocation from "@/app/feature/LoginAttempt/hooks/useLocation";
 import usePlacementForClientAccount from "@/app/feature/placemenet/hook/usePlacementForClientAccount";
 import useUnassignedPlacements from "@/app/feature/placemenet/hook/useUnassignedPlacements";
+import { placementApi } from "@/app/feature/placemenet/api/placement.api";
 import {
   isDeviceConnected,
   type PlacementWithDeviceStatus,
@@ -44,12 +45,12 @@ function GrowthStrategyDetailPanel({
     useDailyStatus(clientAccountId);
   const { placement } = usePlacementForClientAccount(clientAccountId);
 
-  // No backend endpoint can link an EXISTING client account to a placement
-  // (assign() only ever creates a brand-new one) — so when this account has
-  // no device yet, a free unassigned placement is picked at random and used
-  // for this session's VPN/remote-control flow instead. That pairing is
-  // local only: nothing persists it server-side, so it isn't remembered
-  // after a refresh or re-selecting this strategy.
+  // The client account is created device-less (at growth-strategy submit), so
+  // it has no placement until its VPN connects. Until then we pick a free
+  // unassigned placement to run this session's VPN/remote-control on; the
+  // pairing is local only. Once the VPN connects we bind the account to that
+  // placement server-side (placementApi.assignClientAccount, in the effect
+  // below), after which usePlacementForClientAccount resolves it for good.
   const [fallbackPlacement, setFallbackPlacement] =
     useState<PlacementWithDeviceStatus | null>(null);
   const effectivePlacement = placement ?? fallbackPlacement;
@@ -98,15 +99,33 @@ function GrowthStrategyDetailPanel({
     if (automation.status === "COMPLETED") {
       vpnCommandSentRef.current = false;
       setSubStage("idle");
-      if (clientAccountId) {
-        dailyStatusApi
-          .upsert(clientAccountId, todayDate(), "VPN_CONNECTED")
-          .then((result) => {
-            if (!result.success)
-              ErrorToast(result.message ?? "Failed to update status");
-            refetchDailyStatus();
-          });
-      }
+      // VPN is up on this device — NOW bind the device-less client account to
+      // this placement, THEN advance the daily status to VPN_CONNECTED. This
+      // is the deferred assignment: the account existed without a device until
+      // its VPN connected.
+      const placementId = effectivePlacement?.id;
+      void (async () => {
+        if (clientAccountId && placementId) {
+          const bound = await placementApi.assignClientAccount(
+            placementId,
+            clientAccountId,
+          );
+          if (!bound.success) {
+            ErrorToast(bound.message ?? "Failed to assign device to account");
+          }
+        }
+        if (clientAccountId) {
+          const result = await dailyStatusApi.upsert(
+            clientAccountId,
+            todayDate(),
+            "VPN_CONNECTED",
+          );
+          if (!result.success) {
+            ErrorToast(result.message ?? "Failed to update status");
+          }
+          refetchDailyStatus();
+        }
+      })();
     } else if (automation.status === "FAILED") {
       vpnCommandSentRef.current = false;
       setSubStage("vpn-failed");
@@ -116,6 +135,7 @@ function GrowthStrategyDetailPanel({
     automation?.automationType,
     automation?.status,
     clientAccountId,
+    effectivePlacement?.id,
     refetchDailyStatus,
   ]);
 

@@ -2,32 +2,25 @@
 
 import { useEffect, useState } from "react";
 import { ErrorToast } from "@/components/Toasts";
-import { clientAccountApi } from "@/app/feature/client-account/api/client-account.api";
 import { dailyStatusApi } from "@/app/feature/daily-status/api/daily-status.api";
 import { growthStrategyApi } from "@/app/feature/growth-strategy/api/growth-strategy.api";
 import GrowthStrategyForm from "@/app/feature/growth-strategy/component/growth-strategy-form";
 import GrowthStrategyList from "@/app/feature/growth-strategy/component/growth-strategy-list";
 import useGrowthStrategies from "@/app/feature/growth-strategy/hook/useGrowthStrategies";
 import type { GrowthStrategyPayload } from "@/app/feature/growth-strategy/types/growth-strategy.interface";
-import type { UnassignedPlacement } from "@/app/feature/placemenet/hook/useUnassignedPlacements";
 import GrowthStrategyDetailPanel from "./growth-strategy-detail-panel";
 
 const todayDate = () => new Date().toISOString().slice(0, 10);
 
-interface OnboardingFlowProps {
-  placements: UnassignedPlacement[];
-  isLoading: boolean;
-}
-
 type ViewMode = "detail" | "form";
 
 /** Growth-strategy list (left) + status-driven detail/action panel (right).
- *  Creating a new strategy: pick a free device -> connect it to a (new)
- *  client account -> create the growth strategy for that account -> mark
- *  PENDING_LOGIN. The rest of the login flow (VPN connect, remote control)
- *  lives in GrowthStrategyDetailPanel, driven by the selected strategy's
- *  daily status. */
-function OnboardingFlow({ placements, isLoading }: OnboardingFlowProps) {
+ *  Creating a new strategy just creates the client account (device-less) and
+ *  its growth strategy, then marks PENDING_LOGIN. A device is chosen and bound
+ *  later — only after its VPN connects. The rest of the login flow (VPN
+ *  connect, device assignment, remote control) lives in
+ *  GrowthStrategyDetailPanel, driven by the selected strategy's daily status. */
+function OnboardingFlow() {
   const {
     growthStrategies,
     isLoading: isLoadingStrategies,
@@ -53,40 +46,11 @@ function OnboardingFlow({ placements, isLoading }: OnboardingFlowProps) {
     username: string,
     payload: GrowthStrategyPayload,
   ) => {
-    if (isLoading) {
-      return {
-        success: false,
-        message: "Still loading available devices — try again in a moment",
-      };
-    }
-    const available = placements.filter((p) => p.connected && !p.isRunning);
-    console.log(available);
-    if (available.length === 0) {
-      return {
-        success: false,
-        message:
-          "No physical device is available right now — we'll assign one and get back to you soon.",
-      };
-    }
-    const picked = available[Math.floor(Math.random() * available.length)];
-    console.log("Randomly picked placement:", picked);
-    if (!picked.deviceId) {
-      return { success: false, message: "Selected placement has no device" };
-    }
-
-    const assigned = await clientAccountApi.assign(picked.id, username);
-    if (!assigned.success || !assigned.data) {
-      return {
-        success: false,
-        message:
-          assigned.message ?? "Failed to connect device to client account",
-      };
-    }
-
-    const created = await growthStrategyApi.create(
-      assigned.data.igUsername,
-      payload,
-    );
+    // No device is picked or assigned here. Creating the growth strategy also
+    // creates the client account (the backend finds-or-creates it by
+    // igUsername), device-less. A device is chosen and bound to the account
+    // later — only after its VPN connects (see GrowthStrategyDetailPanel).
+    const created = await growthStrategyApi.create(username, payload);
     if (!created.success || !created.data) {
       return {
         success: false,
