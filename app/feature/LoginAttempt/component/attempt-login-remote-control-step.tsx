@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X, ChevronLeft } from "lucide-react";
 
 import useDeviceMonitoring from "@/hooks/DeviceMonitoring/useDeviceMonitoring";
@@ -9,32 +9,35 @@ import { successToast } from "@/components/Toasts";
 interface AttemptLoginRemoteControlStepProps {
   deviceId: string;
   onFinish: () => void;
-  /** Device reported LOGIN_SUCCESSFULL (HOME_SCREEN reached). Falls back to onFinish. */
+  /** Called once when HOME_SCREEN is reached (login succeeded) — e.g. to mark
+   *  the client's daily status. Does NOT close the session; the grace timer
+   *  below closes it (or the operator via Terminate). */
   onLoginSuccess?: () => void;
 }
+
+// After login (HOME_SCREEN), keep the stream open this long before closing
+// automatically, so the operator can confirm/adjust. Terminate ends it sooner.
+const GRACE_MS = 2 * 60 * 1000;
+
+const formatCountdown = (ms: number) => {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+};
 
 export const AttemptLoginRemoteControlStep = ({
   deviceId,
   onFinish,
   onLoginSuccess,
 }: AttemptLoginRemoteControlStepProps) => {
-  const automation = useAppSelector(
-    (state) => state.devices[deviceId]?.automation,
+  // The backend publishes screen=HOME_SCREEN when the login reaches the feed
+  // (RunAutomation routes REMOTE_CONTROL through the login classifier). Unlike
+  // the device's session status, this doesn't flip isRunning off, so the STOP
+  // we send when the grace window ends still tears the session down.
+  const screen = useAppSelector(
+    (state) => state.devices[deviceId]?.automation?.screen,
   );
-  const remoteStatus =
-    automation?.automationType === "REMOTE_CONTROL" ? automation.status : null;
-  // A LOGIN_SUCCESSFULL left over from an earlier session can still be in the
-  // store when this mounts — only trust one after THIS session was seen live.
-  const sawLiveRef = useRef(false);
-  useEffect(() => {
-    if (remoteStatus === "STARTING" || remoteStatus === "RUNNING") {
-      sawLiveRef.current = true;
-    } else if (remoteStatus === "LOGIN_SUCCESSFULL" && sawLiveRef.current) {
-      sawLiveRef.current = false;
-      successToast("Login successful");
-      (onLoginSuccess ?? onFinish)();
-    }
-  }, [remoteStatus, onFinish, onLoginSuccess]);
 
   const {
     status,
@@ -62,6 +65,53 @@ export const AttemptLoginRemoteControlStep = ({
     videoSize,
     setVideoSize,
   });
+
+  // Callbacks via refs so the countdown effect doesn't restart on every parent
+  // re-render (onFinish/onLoginSuccess are usually fresh closures each render).
+  const onFinishRef = useRef(onFinish);
+  onFinishRef.current = onFinish;
+  const onLoginSuccessRef = useRef(onLoginSuccess);
+  onLoginSuccessRef.current = onLoginSuccess;
+
+  const [graceEndsAt, setGraceEndsAt] = useState<number | null>(null);
+  const [remainingMs, setRemainingMs] = useState(GRACE_MS);
+
+  // Only trust a HOME_SCREEN once THIS session's stream has actually come up —
+  // otherwise a HOME_SCREEN left in the store from a previous session could
+  // start the timer the moment this mounts.
+  const sawLiveRef = useRef(false);
+  useEffect(() => {
+    if (remoteStream) sawLiveRef.current = true;
+  }, [remoteStream]);
+
+  // Home screen reached: record the login success now, then start the grace
+  // window. Fires once per mount.
+  const graceStartedRef = useRef(false);
+  useEffect(() => {
+    if (graceStartedRef.current || !sawLiveRef.current) return;
+    if (screen !== "HOME_SCREEN") return;
+    graceStartedRef.current = true;
+    successToast("Login successful");
+    onLoginSuccessRef.current?.();
+    setGraceEndsAt(Date.now() + GRACE_MS);
+  }, [screen, remoteStream]);
+
+  // Tick the countdown; auto-terminate when it hits zero.
+  useEffect(() => {
+    if (graceEndsAt == null) return;
+    let done = false;
+    const tick = () => {
+      const left = graceEndsAt - Date.now();
+      setRemainingMs(left > 0 ? left : 0);
+      if (left <= 0 && !done) {
+        done = true;
+        onFinishRef.current();
+      }
+    };
+    tick();
+    const id = setInterval(tick, 500);
+    return () => clearInterval(id);
+  }, [graceEndsAt]);
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-6xl mx-auto">
@@ -91,6 +141,16 @@ export const AttemptLoginRemoteControlStep = ({
           </button>
         </div>
       </div>
+
+      {graceEndsAt != null && (
+        <div className="flex items-center justify-center gap-2 rounded-xl bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700 border border-emerald-100">
+          Login successful — this session closes automatically in{" "}
+          <span className="font-mono tabular-nums">
+            {formatCountdown(remainingMs)}
+          </span>
+          . Use Terminate to close it now.
+        </div>
+      )}
 
       <div className="flex flex-col lg:flex-row items-start justify-center gap-10 w-full">
         {/* Mobile Streaming View */}

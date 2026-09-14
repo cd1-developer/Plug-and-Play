@@ -66,6 +66,7 @@ function GrowthStrategyDetailPanel({
   );
   const automation = device?.automation;
   const isDeviceOnline = isDeviceConnected(device);
+  console.log(isDeviceOnline);
 
   const [subStage, setSubStage] = useState<SubStage>("idle");
   const [vpnLocation, setVpnLocation] = useState<RankedVpnLocation | null>(
@@ -122,7 +123,9 @@ function GrowthStrategyDetailPanel({
     let target = effectivePlacement;
     if (!target) {
       if (isLoadingUnassigned) {
-        return ErrorToast("Still checking for an available device — try again in a moment");
+        return ErrorToast(
+          "Still checking for an available device — try again in a moment",
+        );
       }
       if (freeUnassignedPlacements.length === 0) {
         return ErrorToast("No free device is available right now");
@@ -174,7 +177,9 @@ function GrowthStrategyDetailPanel({
           deviceId={deviceId}
           onFinish={() => setSubStage("idle")}
           onLoginSuccess={() => {
-            setSubStage("idle");
+            // Home screen reached — mark the account logged in now. Closing the
+            // session is left to the step's post-login grace timer (or the
+            // operator's Terminate button), so don't setSubStage("idle") here.
             if (!clientAccountId) return;
             dailyStatusApi
               .upsert(clientAccountId, todayDate(), "LOGIN_SUCCESSFULL")
