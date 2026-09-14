@@ -15,12 +15,14 @@ types credentials or 2FA codes itself.
 | Repo | Role |
 | --- | --- |
 | **plug_and_play** (this) | Next.js operator dashboard. UI, WebRTC viewer + input, REST/WebSocket clients. |
-| **Scaper_Backend** | Node/Bun WebSocket + REST server. Relays commands, classifies device screens, brokers WebRTC signaling, stores device state in Redis. |
+| **Scaper_Backend** | Node/Bun **WebSocket** server. Relays commands, classifies device screens, brokers WebRTC signaling, stores device state in Redis. |
+| **Ig_Automation_Backned** | Hono + Prisma **REST** API. Growth strategies, client accounts, placements, daily status. |
 | **Axon** | Android app. Accessibility automation, screen-cast (WebRTC sender), executes taps, VPN control. |
 
-The dashboard never touches a device directly — everything goes through
-`Scaper_Backend` over one WebSocket (live state + signaling + commands) and a
-REST API (strategies, accounts, placements, daily status).
+The dashboard never touches a device directly — everything goes through two
+backends: the **WebSocket** server (live device state + WebRTC signaling +
+automation commands) and the **REST** API (strategies, accounts, placements,
+daily status). They are separate services.
 
 ---
 
@@ -33,13 +35,16 @@ one of a few states based on `dailyStatus.status`:
 
 ```
 (submit growth strategy)                     ← THE REAL ENTRY POINT
-        │  creates client account, assigns a device, sets:
+        │  creates the client account WITHOUT a device (device-less) + the
+        │  strategy, sets:
         ▼
    PENDING_LOGIN ──"Login your account"──► [connecting-vpn] ──device COMPLETED──► VPN_CONNECTED
-        ▲                                        │ device FAILED
-        └────────────────────────────────────── [vpn-failed] (Retry)
-                                                                                     │
-   VPN_CONNECTED ──"Connect device"──► REMOTE CONTROL (WebRTC) ─────────────────────┘
+        ▲               (VPN runs on a free                │                 ▲
+        │                unassigned device                 │ device FAILED   │  on COMPLETED, BEFORE
+        │                chosen for this session)           ▼                │  advancing: bind that
+        └────────────────────────────────────── [vpn-failed] (Retry)        │  device to the account
+                                                                             │  (PATCH assign-account)
+   VPN_CONNECTED ──"Connect device"──► REMOTE CONTROL (WebRTC) ──────────────┘
         │  operator logs in live over the stream
         ▼
    screen == HOME_SCREEN reached
@@ -54,6 +59,17 @@ one of a few states based on `dailyStatus.status`:
 `PENDING_LOGIN`; they are not persisted. `LOGIN_SUCCESSFULL` is a server daily
 status set over REST when the home screen is reached.
 
+**Deferred device assignment (important):** submitting the strategy creates the
+client account **with no device attached** — the backend's growth-strategy
+create finds-or-creates the account by `igUsername`. A device is only bound
+**after its VPN connects successfully**: on the device reporting `COMPLETED`,
+`growth-strategy-detail-panel` calls `placementApi.assignClientAccount` (→ `PATCH
+/placements/:id/assign-account`) to bind the chosen free placement to the
+account, *then* advances the daily status to `VPN_CONNECTED`. So if VPN never
+succeeds, the account stays device-less and no placement is consumed. (This
+replaced the old behavior where a device was picked and bound at submit via the
+coupled create-and-assign call.)
+
 ### ⚠️ Testing-only shortcut — the biggest thing to understand
 
 There is a **“get all growth strategies”** call (`GET /growth-strategy` via
@@ -62,10 +78,11 @@ There is a **“get all growth strategies”** call (`GET /growth-strategy` via
 
 **This is for testing/development only — it is NOT the production workflow.**
 The real workflow *always* begins with the operator **submitting a growth
-strategy** (which creates the account, assigns a device, and sets
-`PENDING_LOGIN`). Do not treat “select an existing strategy from the list” as
-the entry point or build product logic around it; it's scaffolding to exercise
-the later steps without re-onboarding each time.
+strategy** (which creates the device-less account + strategy and sets
+`PENDING_LOGIN`; the device is bound later, after VPN). Do not treat “select an
+existing strategy from the list” as the entry point or build product logic
+around it; it's scaffolding to exercise the later steps without re-onboarding
+each time.
 
 ---
 
@@ -113,6 +130,15 @@ the original bug.
    The remote-control start command sets it so the device brings Instagram back
    if the operator leaves it mid-login. Plain monitoring leaves it false.
 
+8. **A device is bound to the account only after VPN connects — never at submit.**
+   Submit creates the account device-less; the bind (`placementApi
+   .assignClientAccount` → `PATCH /placements/:id/assign-account`) happens in the
+   VPN-`COMPLETED` handler, *before* advancing to `VPN_CONNECTED`. Do not move
+   the assign back to submit — a failed VPN would otherwise strand a device
+   permanently bound to an account that never logged in. Note the account is
+   created by the **growth-strategy** create (finds-or-creates by `igUsername`),
+   not by the old coupled `client-accounts/:placementId/assign` call.
+
 ---
 
 ## Message protocol (over the shared WebSocket)
@@ -127,6 +153,14 @@ All of these ride the one shared socket; `deviceId` scopes every message.
 | Start remote control | Step 3 | `{ status:"START", type:"OFFER", automationType:"Remote Control", deviceId, offer, loginAttempt:true }` |
 | ICE | during signaling | `{ type:"ICE_CANDIDATE", deviceId, candidate:{ sdpMid, sdpMLineIndex, candidate } }` |
 | Terminate | Step 5 | `{ status:"STOP", automationType:"Remote Control", deviceId }` |
+
+**Key REST calls (over axios, separate from the socket):**
+
+| Call | When | Endpoint |
+| --- | --- | --- |
+| Create strategy (+ device-less account) | Submit | `POST /growth-strategy/:username` |
+| Set daily status | Submit / VPN / login | `POST /daily-status/:clientAccountId` |
+| **Bind device to account** | **VPN success** | `PATCH /placements/:placementId/assign-account { clientAccountId }` |
 
 **Device → dashboard (via backend broadcast):**
 
@@ -162,10 +196,10 @@ app/
     attempt-login-location-step.tsx         VPN location picker
     live-device-screenshot.tsx              SCREEN_FRAME viewer (used during VPN connect)
 
-  feature/growth-strategy/                  api (create / getAll[testing] / get), hooks, form, list, types
-  feature/client-account/                   api.assign(placementId, igUsername)
+  feature/growth-strategy/                  api (create[also creates the account] / getAll[testing] / get), hooks, form, list, types
+  feature/client-account/                   api.assign (legacy create-and-assign in one shot — NOT used by the current flow)
   feature/daily-status/                     api.upsert / getLatest; DailyActivityStatus type
-  feature/placemenet/                       useUnassignedPlacements, usePlacementForClientAccount, device-status utils
+  feature/placemenet/                       api.assignClientAccount (bind device after VPN), useUnassignedPlacements, usePlacementForClientAccount, device-status utils
 
 hooks/
   websocket/WebsocketProvider.tsx           THE shared socket + useWebSocketContext()
@@ -226,10 +260,11 @@ bun run dev            # or: npm run dev  →  http://localhost:3000
 
 Scripts: `dev`, `build`, `start`, `lint`.
 
-**For a full run** the WebSocket server and REST API must be up, and at least one
-Android device must be online (a *placement*) so the onboarding flow has a device
-to work with. Without a device, you can still load the UI but can't complete the
-VPN/remote-control steps.
+**For a full run** the WebSocket server and REST API must both be up. Submitting
+a growth strategy needs neither a device nor the WebSocket (it's REST-only), but
+the **Connect VPN** step onward needs at least one Android device online (a free
+*placement*) — that's where a device is chosen, VPN-connected, and then bound to
+the account.
 
 ---
 
@@ -241,6 +276,7 @@ VPN/remote-control steps.
 | Terminate hides the UI but the device keeps running | A `STOP` was sent on a closing/second socket — see invariant #1. |
 | Device relaunches (app then Instagram) repeatedly | Start/stop effect re-firing on socket reconnect — see invariant #2. |
 | Session closes instantly on login instead of granting 2 min | `onLoginSuccess` closing the session, or reading a device `LOGIN_SUCCESSFULL` status instead of `screen==="HOME_SCREEN"` — invariants #3 & #5. |
+| "Failed to assign device to account" toast after VPN connects | The `PATCH /placements/:id/assign-account` bind failed — check the REST base URL / `x-api-key`, that the placement is still free, and that the backend has this route (see invariant #8). |
 
 ---
 
