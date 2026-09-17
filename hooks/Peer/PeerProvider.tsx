@@ -24,8 +24,8 @@ export const PeerProvider = ({ children }: { children: React.ReactNode }) => {
         iceServers: [
           {
             urls: [
-              process.env.NEXT_PUBIC_STUN_URL1!,
-              process.env.NEXT_PUBIC_STUN_URL2!,
+              "stun:stun.l.google.com:19302",
+              "stun:global.stun.twilio.com:3478",
             ],
           },
         ],
