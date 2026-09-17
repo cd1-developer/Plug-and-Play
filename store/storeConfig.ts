@@ -4,7 +4,7 @@ import { TypedUseSelectorHook, useDispatch, useSelector } from "react-redux";
 import storage from "redux-persist/lib/storage";
 import devicesReducer from "./slices/devices/devices.slice";
 import placementsReducer from "./slices/placements/placements.slice";
-
+import accessTokenReducer from "./slices/AccessToken/access-token.slice";
 import { reduxSyncMiddleware } from "./redux-middleware";
 
 // `clientTarget` moved from a flat `{ clientTargets: [] }` shape to a keyed
@@ -47,16 +47,18 @@ const persistConfig = {
   key: "root",
   version: 4,
   storage,
-  // Nothing is persisted: `placements` below is an in-memory-only cache (never
-  // localStorage) — this whitelist must stay empty or that name would collide
-  // with the stale v4 migration's key and start persisting it silently.
-  whitelist: [],
+  // `placements` is an in-memory-only cache (never localStorage) and must
+  // stay out of this list or it'd collide with the stale v4 migration's key
+  // and start persisting it silently. `accessToken` is safe to persist so a
+  // still-valid token survives a reload instead of being re-minted.
+  whitelist: ["accessToken"],
   migrate: createMigrate(migrations, { debug: false }),
 };
 
 const rootReducer = combineReducers({
   devices: devicesReducer,
   placements: placementsReducer,
+  accessToken: accessTokenReducer,
 });
 
 const persistedReducer = persistReducer(persistConfig, rootReducer);

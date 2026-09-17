@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppDispatch } from "@/store/storeConfig";
 import { deviceMessage } from "@/store/slices/devices/devices.slice";
 import { DeviceMessage } from "@/store/slices/devices/devices.interface";
+import { getAccessToken } from "@/libs/AxiosInstance";
 
 function useWebsocket() {
   const dispatch = useAppDispatch();
@@ -13,9 +14,15 @@ function useWebsocket() {
   const listeners = useRef<Set<(msg: DeviceMessage) => void>>(new Set());
   useEffect(() => {
     let ws: WebSocket;
+    let cancelled = false;
 
-    const connect = () => {
-      ws = new WebSocket(process.env.NEXT_PUBLIC_WEBSOCKET_URL!);
+    const connect = async () => {
+      const token = await getAccessToken();
+      if (cancelled) return;
+
+      const url = new URL(process.env.NEXT_PUBLIC_WEBSOCKET_URL!);
+      if (token) url.searchParams.set("token", token);
+      ws = new WebSocket(url);
 
       ws.onopen = () => {
         console.log("Connected");
@@ -50,6 +57,8 @@ function useWebsocket() {
     connect();
 
     return () => {
+      cancelled = true;
+
       if (reconnectTimeout.current) {
         clearTimeout(reconnectTimeout.current);
       }

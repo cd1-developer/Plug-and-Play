@@ -12,12 +12,12 @@ types credentials or 2FA codes itself.
 
 ### The three repos (this is one of them)
 
-| Repo | Role |
-| --- | --- |
-| **plug_and_play** (this) | Next.js operator dashboard. UI, WebRTC viewer + input, REST/WebSocket clients. |
-| **Scaper_Backend** | Node/Bun **WebSocket** server. Relays commands, classifies device screens, brokers WebRTC signaling, stores device state in Redis. |
-| **Ig_Automation_Backned** | Hono + Prisma **REST** API. Growth strategies, client accounts, placements, daily status. |
-| **Axon** | Android app. Accessibility automation, screen-cast (WebRTC sender), executes taps, VPN control. |
+| Repo                      | Role                                                                                                                               |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **plug_and_play** (this)  | Next.js operator dashboard. UI, WebRTC viewer + input, REST/WebSocket clients.                                                     |
+| **Scaper_Backend**        | Node/Bun **WebSocket** server. Relays commands, classifies device screens, brokers WebRTC signaling, stores device state in Redis. |
+| **Ig_Automation_Backned** | Hono + Prisma **REST** API. Growth strategies, client accounts, placements, daily status.                                          |
+| **Axon**                  | Android app. Accessibility automation, screen-cast (WebRTC sender), executes taps, VPN control.                                    |
 
 The dashboard never touches a device directly — everything goes through two
 backends: the **WebSocket** server (live device state + WebRTC signaling +
@@ -65,7 +65,7 @@ create finds-or-creates the account by `igUsername`. A device is only bound
 **after its VPN connects successfully**: on the device reporting `COMPLETED`,
 `growth-strategy-detail-panel` calls `placementApi.assignClientAccount` (→ `PATCH
 /placements/:id/assign-account`) to bind the chosen free placement to the
-account, *then* advances the daily status to `VPN_CONNECTED`. So if VPN never
+account, _then_ advances the daily status to `VPN_CONNECTED`. So if VPN never
 succeeds, the account stays device-less and no placement is consumed. (This
 replaced the old behavior where a device was picked and bound at submit via the
 coupled create-and-assign call.)
@@ -77,7 +77,7 @@ There is a **“get all growth strategies”** call (`GET /growth-strategy` via
 **pick any one and jump straight into its detail panel**.
 
 **This is for testing/development only — it is NOT the production workflow.**
-The real workflow *always* begins with the operator **submitting a growth
+The real workflow _always_ begins with the operator **submitting a growth
 strategy** (which creates the device-less account + strategy and sets
 `PENDING_LOGIN`; the device is bound later, after VPN). Do not treat “select an
 existing strategy from the list” as the entry point or build product logic
@@ -113,7 +113,7 @@ the original bug.
    would be a no-op on the device (`stopIfRunning` bails when not running).
 
 4. **The grace window keeps the session alive; only `STOP` ends it.**
-   On home screen the device does *not* self-terminate. Termination happens when
+   On home screen the device does _not_ self-terminate. Termination happens when
    the frontend sends `STOP` — at grace expiry (auto) or via the Terminate button
    (manual). `GRACE_MS` lives at the top of
    `app/feature/LoginAttempt/component/attempt-login-remote-control-step.tsx`.
@@ -132,8 +132,8 @@ the original bug.
 
 8. **A device is bound to the account only after VPN connects — never at submit.**
    Submit creates the account device-less; the bind (`placementApi
-   .assignClientAccount` → `PATCH /placements/:id/assign-account`) happens in the
-   VPN-`COMPLETED` handler, *before* advancing to `VPN_CONNECTED`. Do not move
+.assignClientAccount` → `PATCH /placements/:id/assign-account`) happens in the
+   VPN-`COMPLETED` handler, _before_ advancing to `VPN_CONNECTED`. Do not move
    the assign back to submit — a failed VPN would otherwise strand a device
    permanently bound to an account that never logged in. Note the account is
    created by the **growth-strategy** create (finds-or-creates by `igUsername`),
@@ -147,34 +147,84 @@ All of these ride the one shared socket; `deviceId` scopes every message.
 
 **Dashboard → device (commands & signaling):**
 
-| Message | When | Shape (key fields) |
-| --- | --- | --- |
-| Change VPN | Step 2 | `{ status:"START", automationType:"Change Vpn Location", deviceId, vpnLocation }` |
-| Start remote control | Step 3 | `{ status:"START", type:"OFFER", automationType:"Remote Control", deviceId, offer, loginAttempt:true }` |
-| ICE | during signaling | `{ type:"ICE_CANDIDATE", deviceId, candidate:{ sdpMid, sdpMLineIndex, candidate } }` |
-| Terminate | Step 5 | `{ status:"STOP", automationType:"Remote Control", deviceId }` |
+| Message              | When             | Shape (key fields)                                                                                      |
+| -------------------- | ---------------- | ------------------------------------------------------------------------------------------------------- |
+| Change VPN           | Step 2           | `{ status:"START", automationType:"Change Vpn Location", deviceId, vpnLocation }`                       |
+| Start remote control | Step 3           | `{ status:"START", type:"OFFER", automationType:"Remote Control", deviceId, offer, loginAttempt:true }` |
+| ICE                  | during signaling | `{ type:"ICE_CANDIDATE", deviceId, candidate:{ sdpMid, sdpMLineIndex, candidate } }`                    |
+| Terminate            | Step 5           | `{ status:"STOP", automationType:"Remote Control", deviceId }`                                          |
 
 **Key REST calls (over axios, separate from the socket):**
 
-| Call | When | Endpoint |
-| --- | --- | --- |
-| Create strategy (+ device-less account) | Submit | `POST /growth-strategy/:username` |
-| Set daily status | Submit / VPN / login | `POST /daily-status/:clientAccountId` |
-| **Bind device to account** | **VPN success** | `PATCH /placements/:placementId/assign-account { clientAccountId }` |
+| Call                                    | When                 | Endpoint                                                            |
+| --------------------------------------- | -------------------- | ------------------------------------------------------------------- |
+| Create strategy (+ device-less account) | Submit               | `POST /growth-strategy/:username`                                   |
+| Set daily status                        | Submit / VPN / login | `POST /daily-status/:clientAccountId`                               |
+| **Bind device to account**              | **VPN success**      | `PATCH /placements/:placementId/assign-account { clientAccountId }` |
 
 **Device → dashboard (via backend broadcast):**
 
-| Message | Meaning |
-| --- | --- |
-| `ANSWER` | `{ type:"ANSWER", deviceId, sdp, screenWidth, screenHeight }` — completes signaling; screen size sets the video's aspect ratio. |
-| `ICE_CANDIDATE` | trickled ICE from the device. |
-| `AUTOMATION_STATE` | full per-device snapshot: `status`, `automationType`, `screen`, counts, etc. The backend patches `screen:"HOME_SCREEN"` onto this for remote-control logins. |
-| `DEVICE_CONN` | `{ online, lastSeen }` connection state. |
-| `SCREEN_FRAME` / `LOG` | live screenshot bytes / device log lines. |
+| Message                | Meaning                                                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ANSWER`               | `{ type:"ANSWER", deviceId, sdp, screenWidth, screenHeight }` — completes signaling; screen size sets the video's aspect ratio.                              |
+| `ICE_CANDIDATE`        | trickled ICE from the device.                                                                                                                                |
+| `AUTOMATION_STATE`     | full per-device snapshot: `status`, `automationType`, `screen`, counts, etc. The backend patches `screen:"HOME_SCREEN"` onto this for remote-control logins. |
+| `DEVICE_CONN`          | `{ online, lastSeen }` connection state.                                                                                                                     |
+| `SCREEN_FRAME` / `LOG` | live screenshot bytes / device log lines.                                                                                                                    |
 
 **Input** (taps, swipes, Back, Enter, text, scroll) does **not** use the
 WebSocket — it goes over the **WebRTC data channel** (see `useAction`), as
 normalized coordinates the device maps to real pixels.
+
+---
+
+## Access token — short-lived vs. long-lived
+
+Two credentials, two lifetimes:
+
+- **Long-lived**: `NEXT_PUBLIC_BACKEND_API_KEY`, a static secret from the env.
+  It is used for exactly one thing — minting an access token — and is never
+  attached to any other request.
+- **Short-lived**: the actual bearer token used on every REST call and the
+  WebSocket handshake. Minted by exchanging the long-lived key for one via
+  `POST /access-token`
+  (`app/feature/access-token/api/short-live-token.api.ts`), cached in Redux
+  (`store/slices/AccessToken`) alongside its `expiresAt`, and persisted to
+  `localStorage` (redux-persist whitelist) so a still-valid token survives a
+  page reload instead of being re-minted.
+
+`getAccessToken()` (`libs/AxiosInstance.ts`) is the single choke point both
+consumers call through:
+
+1. Cached token in Redux (backed by localStorage) and not yet past
+   `expiresAt`? → return it, no network call.
+2. Not found in Redux/localStorage, or past `expiresAt`? → if a (now-expired)
+   token is still sitting in state, `clearAccessToken()` it first, then call
+   `createAccessToken()` (spends the long-lived key), `setAccessToken()` the
+   result into Redux, and return the new token as the REST
+   `Authorization: Bearer` header. Concurrent callers share one in-flight mint
+   via `pendingTokenRequest` so a burst of requests on mount doesn't mint
+   several tokens at once.
+
+Expiry is handled by removal, not a stale flag: once a token is past
+`expiresAt` it's cleared from Redux rather than left in place, so step 1 above
+naturally falls through to step 2 next time anyone asks for a token — there is
+no separate "is it expired" branch elsewhere in the app to keep in sync.
+
+Consumers:
+
+- **REST** — `axiosInstance`'s request interceptor calls `getAccessToken()`
+  and sets `Authorization: Bearer <token>` on every outgoing request.
+- **WebSocket** — `hooks/websocket/useWebsocket.tsx` awaits the same
+  `getAccessToken()` and appends the token as a `?token=` query param before
+  connecting, since the native `WebSocket` API can't set custom headers.
+
+**Invariant:** `createAccessToken()` must call a bare `axios.post(...)`, never
+the shared `axiosInstance`. `axiosInstance`'s interceptor calls
+`createAccessToken()` to mint a token — routing the mint call back through
+`axiosInstance` makes the interceptor await its own in-flight
+`pendingTokenRequest`, which deadlocks every request in the app the first
+time a token needs minting.
 
 ---
 
@@ -200,6 +250,7 @@ app/
   feature/client-account/                   api.assign (legacy create-and-assign in one shot — NOT used by the current flow)
   feature/daily-status/                     api.upsert / getLatest; DailyActivityStatus type
   feature/placemenet/                       api.assignClientAccount (bind device after VPN), useUnassignedPlacements, usePlacementForClientAccount, device-status utils
+  feature/access-token/api/                 short-live-token.api.ts: mints short-lived token via long-lived x-api-key
 
 hooks/
   websocket/WebsocketProvider.tsx           THE shared socket + useWebSocketContext()
@@ -212,7 +263,11 @@ store/slices/devices/
   devices.slice.ts                          reducers: deviceMessage (routes by type), patchAutomation (optimistic)
   devices.interface.ts                      AutomationState / DeviceState / status unions
 
-libs/AxiosInstance.ts                       axios: baseURL = NEXT_PUBLIC_BACKEND_URL + "/api", x-api-key header
+store/slices/AccessToken/
+  access-token.slice.ts                     caches the short-lived token + expiresAt, persisted to localStorage
+  access-token.interface.ts                 AccessTokenResponse shape
+
+libs/AxiosInstance.ts                       axios: baseURL = NEXT_PUBLIC_BACKEND_URL + "/api"; getAccessToken() + Authorization: Bearer interceptor (see Access token section)
 utils/service/LocationService.ts            closest-VPN-location resolution
 components/                                 shadcn/radix UI, Toasts (sonner), ErrorBoundary
 ```
@@ -238,12 +293,12 @@ components/                                 shadcn/radix UI, Toasts (sonner), Er
 
 Create `.env.local` (gitignored):
 
-| Variable | Purpose |
-| --- | --- |
-| `NEXT_PUBLIC_WEBSOCKET_URL` | WebSocket server URL (e.g. `ws://localhost:8080`). |
-| `NEXT_PUBLIC_BACKEND_URL` | REST API base (axios appends `/api`). |
-| `NEXT_PUBLIC_BACKEND_API_KEY` | Sent as `x-api-key` on REST requests. |
-| `NEXT_PUBLIC_LOCATION_API_ENDPOINT` | VPN/location lookup endpoint. |
+| Variable                            | Purpose                                            |
+| ----------------------------------- | -------------------------------------------------- |
+| `NEXT_PUBLIC_WEBSOCKET_URL`         | WebSocket server URL (e.g. `ws://localhost:8080`). |
+| `NEXT_PUBLIC_BACKEND_URL`           | REST API base (axios appends `/api`).              |
+| `NEXT_PUBLIC_BACKEND_API_KEY`       | Long-lived secret, spent only to mint the short-lived access token (see [Access token](#access-token--short-lived-vs-long-lived)). |
+| `NEXT_PUBLIC_LOCATION_API_ENDPOINT` | VPN/location lookup endpoint.                      |
 
 Nothing is hardcoded — all config comes from the environment. `NEXT_PUBLIC_*` is
 browser-exposed by design; keep true secrets out of it.
@@ -263,20 +318,20 @@ Scripts: `dev`, `build`, `start`, `lint`.
 **For a full run** the WebSocket server and REST API must both be up. Submitting
 a growth strategy needs neither a device nor the WebSocket (it's REST-only), but
 the **Connect VPN** step onward needs at least one Android device online (a free
-*placement*) — that's where a device is chosen, VPN-connected, and then bound to
+_placement_) — that's where a device is chosen, VPN-connected, and then bound to
 the account.
 
 ---
 
 ## Troubleshooting quick-reference
 
-| Symptom | Likely cause |
-| --- | --- |
-| Remote video is blank | ICE never connected — often a VPN blocking the direct path; needs a TURN relay (STUN alone isn't enough). Check `ICE connection state` logs on the device. |
-| Terminate hides the UI but the device keeps running | A `STOP` was sent on a closing/second socket — see invariant #1. |
-| Device relaunches (app then Instagram) repeatedly | Start/stop effect re-firing on socket reconnect — see invariant #2. |
-| Session closes instantly on login instead of granting 2 min | `onLoginSuccess` closing the session, or reading a device `LOGIN_SUCCESSFULL` status instead of `screen==="HOME_SCREEN"` — invariants #3 & #5. |
-| "Failed to assign device to account" toast after VPN connects | The `PATCH /placements/:id/assign-account` bind failed — check the REST base URL / `x-api-key`, that the placement is still free, and that the backend has this route (see invariant #8). |
+| Symptom                                                       | Likely cause                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Remote video is blank                                         | When an Android device is connected to a VPN, the frontend may previously have displayed a blank screen due to connectivity issues. This issue has been resolved, and users can now view the device screen even while the VPN is connected. Currently, STUN is sufficient to establish the required connection, so TURN server configuration is not required. |
+| Terminate hides the UI but the device keeps running           | A `STOP` was sent on a closing/second socket — see invariant #1.                                                                                                                                                                                                                                                                                              |
+| Device relaunches (app then Instagram) repeatedly             | Start/stop effect re-firing on socket reconnect — see invariant #2.                                                                                                                                                                                                                                                                                           |
+| Session closes instantly on login instead of granting 2 min   | `onLoginSuccess` closing the session, or reading a device `LOGIN_SUCCESSFULL` status instead of `screen==="HOME_SCREEN"` — invariants #3 & #5.                                                                                                                                                                                                                |
+| "Failed to assign device to account" toast after VPN connects | The `PATCH /placements/:id/assign-account` bind failed — check the REST base URL / `x-api-key`, that the placement is still free, and that the backend has this route (see invariant #8).                                                                                                                                                                     |
 
 ---
 
