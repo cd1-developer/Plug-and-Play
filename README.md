@@ -226,6 +226,24 @@ the shared `axiosInstance`. `axiosInstance`'s interceptor calls
 `pendingTokenRequest`, which deadlocks every request in the app the first
 time a token needs minting.
 
+### External consumers (e.g. Ascend) — this is a breaking change
+
+`x-api-key` used to be attached to every REST call. It no longer is —
+**it's spent on exactly one call now: minting the access token.** Any other
+integration hitting the DB backend (REST) or WebSocket backend directly must
+adopt the same flow this repo uses:
+
+1. `POST /access-token` with header `x-api-key: <long-lived key>` → returns a
+   short-lived access token (15 min TTL), backed by Redis on the server side.
+2. REST calls → `Authorization: Bearer <access-token>`, not `x-api-key`.
+3. WebSocket connect → append `?token=<access-token>` to the URL (no custom
+   headers on the native WebSocket API); the WebSocket backend checks the
+   token against the same Redis store and rejects the connection if it's
+   missing or invalid.
+4. Cache the token client-side with its expiry; reuse while valid, mint a new
+   one only once it's missing/expired — mirror the `getAccessToken()` logic
+   above rather than minting per-request.
+
 ---
 
 ## Where the logic lives (file map)
